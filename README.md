@@ -44,12 +44,6 @@ bounty-tt-clip/
 │   ├── validate_multi_image.py # Multi-image prediction test
 │   └── test_cpu.py             # CPU-only PyTorch reference test
 │
-└── docs/                       # Documentation
-    ├── validation_report.md    # Detailed validation results
-    ├── 01-tenstorrent-fundamentals.md
-    ├── 02-sharding-deep-dive.md
-    ├── 03-fusion-and-program-configs.md
-    └── 04-clip-vit-bounty-roadmap.md
 ```
 
 ## Current Status
