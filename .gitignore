@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model weights & checkpoints
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# ttsim generated artifacts
+generated/
+clip_vit_ttnn/generated/
+.benchmarks/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+.claude/
+docs/

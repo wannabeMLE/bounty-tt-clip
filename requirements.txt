@@ -1,0 +1,28 @@
+# CLIP-ViT TTNN - Python Dependencies
+# NOTE: ttnn is NOT pip-installable. It comes from tt-metal built from source.
+#   See: https://github.com/tenstorrent/tt-metal
+#   Install these deps into tt-metal's python_env venv.
+
+# Core ML
+torch>=2.1.0
+numpy>=1.24.0
+
+# HuggingFace (model loading + tokenizer + processor)
+transformers>=4.36.0
+huggingface-hub>=0.20.0
+
+# Image processing
+Pillow>=10.0.0
+
+# COCO dataset validation
+datasets>=2.16.0
+pycocotools>=2.0.7
+
+# Testing
+pytest>=7.4.0
+pytest-timeout>=2.2.0
+
+# Utilities
+scipy>=1.11.0
+requests>=2.31.0
+tqdm>=4.66.0
