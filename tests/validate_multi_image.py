@@ -5,6 +5,7 @@ validate_multi_image.py -- Test TTNN CLIP on multiple images vs PyTorch referenc
 Downloads 5 COCO val2017 images, runs both PyTorch and TTNN, compares predictions.
 """
 
+import argparse
 import os
 import sys
 
@@ -51,8 +52,14 @@ def compute_pcc(a, b):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Multi-image CLIP validation: PyTorch vs TTNN")
+    parser.add_argument("--stage", type=int, default=1, help="TTNN optimization stage (1, 2, or 3)")
+    args = parser.parse_args()
+
+    stage = args.stage
     print("=" * 65)
     print("  CLIP-ViT Multi-Image Validation: PyTorch vs TTNN")
+    print(f"  Stage: {stage}")
     print("=" * 65)
 
     # Load HF model
@@ -64,7 +71,7 @@ def main():
     # Init TTNN
     print("Initializing TTNN device...")
     device = ttnn.open_device(device_id=0)
-    config = CLIPTTNNConfig(stage=1)
+    config = CLIPTTNNConfig(stage=stage)
     params = load_all_weights(hf_model, device, config)
     params["logit_scale"] = hf_model.logit_scale.data.clone()
 
