@@ -34,6 +34,8 @@ clip_vit_ttnn/generated/
 .DS_Store
 Thumbs.db
 
+.env
+
 # Project-specific
 .claude/
 docs/
