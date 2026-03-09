@@ -13,11 +13,11 @@ This project implements the full CLIP (Contrastive Language-Image Pre-training) 
 
 ### Three Optimization Stages
 
-| Stage | Memory | Math | Features | PCC Target |
-|-------|--------|------|----------|------------|
-| **Stage 1** | DRAM | HiFi4 | Baseline functional | > 0.99 |
-| **Stage 2** | L1 | LoFi | GELU fusion, all 56 cores, program cache | > 0.98 |
-| **Stage 3** | L1 | LoFi | SDPA, full fusion, program configs | > 0.97 |
+| Stage | Memory | Math | Features |
+|-------|--------|------|----------|
+| **Stage 1** | DRAM | HiFi4 | Baseline functional |
+| **Stage 2** | L1 | LoFi | GELU fusion, sharding, program cache |
+| **Stage 3** | L1 | LoFi | SDPA, full fusion, program configs |
 
 ## Project Structure
 
@@ -25,7 +25,6 @@ This project implements the full CLIP (Contrastive Language-Image Pre-training) 
 bounty-tt-clip/
 ├── README.md
 ├── requirements.txt
-├── setup_ttsim.sh              # ttsim environment setup
 │
 ├── clip_vit_ttnn/              # Core implementation
 │   ├── tt/
@@ -48,59 +47,45 @@ bounty-tt-clip/
 
 ## Current Status
 
-**Stage 1: Complete and validated on ttsim**
+**Stage 1: Complete and validated on N300 hardware**
 
 | Test | Result |
 |------|--------|
-| Vision patch embeddings | PCC = 0.999999 |
-| Text encoder (avg 3 texts) | PCC = 0.990 |
-| Full pipeline logits | PCC = 0.999 |
-| Multi-image predictions | 4/4 correct |
-| Top-1 prediction | "a photo of a cat" @ 99.2% (matches PyTorch) |
-
-> Vision encoder per-layer PCC degrades to ~0.965 due to manual softmax decomposition
-> required by ttsim. Native `ttnn.softmax` on real hardware should resolve this.
+| Vision patch embeddings | PCC = 1.000000 |
+| Vision block 0 output | PCC = 0.990871 |
+| Full pipeline logits | PCC = 0.998843 |
+| Multi-image predictions | 5/5 correct |
+| Top-1 prediction | "a photo of a cat" @ 94.5% (matches PyTorch) |
 
 ## Quick Start
 
 ### Prerequisites
 
-- [tt-metal](https://github.com/tenstorrent/tt-metal) built from source
-- [ttsim](https://github.com/tenstorrent/ttsim) v1.4.0+ (or real Tenstorrent hardware)
-- Python 3.10+ with tt-metal's virtual environment
-
-### Setup
-
-```bash
-# Install dependencies into tt-metal's python_env
-source $TT_METAL_HOME/python_env/bin/activate
-pip install -r requirements.txt
-```
+- Tenstorrent N150 or N300 hardware (Wormhole B0)
+- Python 3.10+ with ttnn installed
+- Dependencies: `pip install -r requirements.txt`
 
 ### Run Validation
 
 ```bash
-# Set environment
-export TT_METAL_HOME=/path/to/tt-metal
-export TT_METAL_SIMULATOR=/path/to/libttsim_wh.so  # only for ttsim
-export TT_METAL_SLOW_DISPATCH_MODE=1
-export ARCH_NAME=wormhole_b0
-
 # Generate golden reference (CPU only, no hardware needed)
-python tests/generate_golden.py
+python tests/generate_golden.py --skip_coco
 
 # Validate against golden reference
-python tests/validate_golden.py --stage 1
+python tests/validate_golden.py --stage 1 --golden golden_reference.pt
 
 # Test on multiple images
-python tests/validate_multi_image.py
+python tests/validate_multi_image.py --stage 1
 ```
 
-## Technical Notes
+### Run Demo
 
-### ttsim Limitations
-- `ttnn.softmax` not supported (uses SFPLOADMACRO) — manual decomposition used instead
-- `ttnn.add` does not support subtile broadcast — causal mask pre-expanded to `[1, num_heads, S, S]`
-- Performance benchmarks are not meaningful on the simulator
+```bash
+python clip_vit_ttnn/demo/demo_clip.py --stage 1
+```
 
-See [docs/validation_report.md](docs/validation_report.md) for detailed analysis.
+## Hardware
+
+- **Device:** Tenstorrent Wormhole B0 (N300, 2 chips)
+- **Compute grid:** 8x7 = 56 cores
+- **Architecture:** `Arch.WORMHOLE_B0`

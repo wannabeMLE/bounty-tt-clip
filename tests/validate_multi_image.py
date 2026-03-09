@@ -94,7 +94,7 @@ def main():
     # PyTorch: encode all texts at once
     with torch.no_grad():
         pt_text_out = hf_model.get_text_features(**text_inputs)
-    pt_text_all = pt_text_out
+    pt_text_all = pt_text_out if isinstance(pt_text_out, torch.Tensor) else pt_text_out.pooler_output if hasattr(pt_text_out, 'pooler_output') else pt_text_out.last_hidden_state
 
     print(f"  TTNN text embeds: {ttnn_text_all.shape}")
     print(f"  PT text embeds:   {pt_text_all.shape}")
@@ -119,7 +119,8 @@ def main():
 
         # PyTorch prediction
         with torch.no_grad():
-            pt_img_out = hf_model.get_image_features(pixel_values=pixel_values)
+            pt_img_raw = hf_model.get_image_features(pixel_values=pixel_values)
+            pt_img_out = pt_img_raw if isinstance(pt_img_raw, torch.Tensor) else pt_img_raw.pooler_output if hasattr(pt_img_raw, 'pooler_output') else pt_img_raw.last_hidden_state
             pt_img_norm = pt_img_out / pt_img_out.norm(p=2, dim=-1, keepdim=True)
             pt_text_norm = pt_text_all / pt_text_all.norm(p=2, dim=-1, keepdim=True)
             pt_logits = (pt_img_norm @ pt_text_norm.T) * hf_model.logit_scale.exp()
