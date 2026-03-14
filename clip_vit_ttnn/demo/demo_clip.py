@@ -54,7 +54,8 @@ def run_demo(stage: int = 1, image_path: str = None):
 
     # --- Open device ---
     print("[2/5] Opening Tenstorrent device...")
-    device = ttnn.open_device(device_id=0)
+    dispatch_config = ttnn.DispatchCoreConfig(type=ttnn.DispatchCoreType.WORKER)
+    device = ttnn.open_device(device_id=0, dispatch_core_config=dispatch_config)
 
     try:
         # --- Create config and load weights ---

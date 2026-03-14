@@ -1,0 +1,60 @@
+{
+  "stage": 2,
+  "timestamp": "2026-03-14T00:29:30.400862",
+  "hardware": "Tenstorrent Wormhole B0 (N300)",
+  "model": "openai/clip-vit-base-patch32",
+  "num_runs": 10,
+  "pt_vision_avg_ms": 66.0255736002,
+  "pt_vision_min_ms": 53.30269799742382,
+  "pt_text_avg_ms": 19.820641099795466,
+  "pt_text_min_ms": 17.434891997254454,
+  "tt_vision_avg_ms": 6.598698001471348,
+  "tt_vision_min_ms": 6.331060998491012,
+  "tt_text_avg_ms": 4.179713300982257,
+  "tt_text_min_ms": 3.7712889970862307,
+  "tt_full_pipeline_ms": 18.962982001539785,
+  "vision_compile_ms": 9923.942137997074,
+  "vision_cached_ms": 6.878306994622108,
+  "text_compile_ms": 5680.354470001475,
+  "text_cached_ms": 3.8486780031234957,
+  "vision_fps": 151.54504718613043,
+  "vision_pcc": 0.9644122123718262,
+  "text_pcc": 0.9896308183670044,
+  "logits_pcc": 0.9943966269493103,
+  "predicted_text": "a photo of a cat",
+  "prediction_correct": true,
+  "tt_logits": [
+    [
+      26.0,
+      20.375,
+      20.25
+    ]
+  ],
+  "ref_logits": [
+    [
+      24.570056915283203,
+      19.304899215698242,
+      18.48160743713379
+    ]
+  ],
+  "tt_probs": [
+    [
+      0.9921875,
+      0.0035858154296875,
+      0.0031585693359375
+    ]
+  ],
+  "ref_probs": [
+    [
+      0.9926174283027649,
+      0.005130420438945293,
+      0.0022521736100316048
+    ]
+  ],
+  "speedup_vision_vs_cpu": 10.005848666733637,
+  "speedup_text_vs_cpu": 4.742105420277869,
+  "speedup_vision_vs_stage1": 1.994264641176533,
+  "speedup_text_vs_stage1": 3.3736137589060156,
+  "stage1_vision_avg_ms": 13.159550102136564,
+  "stage1_text_avg_ms": 14.100738300476223
+}

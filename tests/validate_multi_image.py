@@ -70,7 +70,8 @@ def main():
 
     # Init TTNN
     print("Initializing TTNN device...")
-    device = ttnn.open_device(device_id=0)
+    dispatch_config = ttnn.DispatchCoreConfig(type=ttnn.DispatchCoreType.WORKER)
+    device = ttnn.open_device(device_id=0, dispatch_core_config=dispatch_config)
     config = CLIPTTNNConfig(stage=stage)
     params = load_all_weights(hf_model, device, config)
     params["logit_scale"] = hf_model.logit_scale.data.clone()

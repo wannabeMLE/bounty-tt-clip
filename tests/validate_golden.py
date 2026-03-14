@@ -548,7 +548,8 @@ def main():
 
     # Initialize TTNN device
     print("\nInitializing TTNN device...")
-    device = ttnn.open_device(device_id=0)
+    dispatch_config = ttnn.DispatchCoreConfig(type=ttnn.DispatchCoreType.WORKER)
+    device = ttnn.open_device(device_id=0, dispatch_core_config=dispatch_config)
 
     # Create config and load weights
     config = CLIPTTNNConfig(stage=args.stage)

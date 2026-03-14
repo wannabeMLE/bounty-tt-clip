@@ -97,7 +97,8 @@ def main():
 
     # Open device
     print("Opening Tenstorrent device...")
-    device = ttnn.open_device(device_id=0)
+    dispatch_config = ttnn.DispatchCoreConfig(type=ttnn.DispatchCoreType.WORKER)
+    device = ttnn.open_device(device_id=0, dispatch_core_config=dispatch_config)
 
     try:
         # Prepare inputs
