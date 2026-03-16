@@ -264,8 +264,9 @@ def validate_phase2(golden, params, config, device):
         pcc_fc1 = compute_pcc(golden_phase2["mlp_fc1"], tt_fc1[:, :seq_len, :])
         print_result("mlp_fc1", pcc_fc1, threshold)
 
-        # --- GELU activation (stage 1 uses ttnn.gelu) ---
-        gelu_out = ttnn.gelu(fc1, memory_config=memory_config)
+        # --- QuickGELU activation: x * sigmoid(1.702 * x) ---
+        from clip_vit_ttnn.tt.clip_model import _quick_gelu
+        gelu_out = _quick_gelu(fc1, memory_config=memory_config)
         ttnn.deallocate(fc1)
 
         tt_gelu = ttnn.to_torch(gelu_out)

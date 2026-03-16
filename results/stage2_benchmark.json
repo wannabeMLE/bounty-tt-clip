@@ -1,33 +1,38 @@
 {
   "stage": 2,
-  "timestamp": "2026-03-14T00:29:30.400862",
+  "timestamp": "2026-03-16T19:52:02.018553",
   "hardware": "Tenstorrent Wormhole B0 (N300)",
   "model": "openai/clip-vit-base-patch32",
   "num_runs": 10,
-  "pt_vision_avg_ms": 66.0255736002,
-  "pt_vision_min_ms": 53.30269799742382,
-  "pt_text_avg_ms": 19.820641099795466,
-  "pt_text_min_ms": 17.434891997254454,
-  "tt_vision_avg_ms": 6.598698001471348,
-  "tt_vision_min_ms": 6.331060998491012,
-  "tt_text_avg_ms": 4.179713300982257,
-  "tt_text_min_ms": 3.7712889970862307,
-  "tt_full_pipeline_ms": 18.962982001539785,
-  "vision_compile_ms": 9923.942137997074,
-  "vision_cached_ms": 6.878306994622108,
-  "text_compile_ms": 5680.354470001475,
-  "text_cached_ms": 3.8486780031234957,
-  "vision_fps": 151.54504718613043,
-  "vision_pcc": 0.9644122123718262,
-  "text_pcc": 0.9896308183670044,
-  "logits_pcc": 0.9943966269493103,
+  "pcc_threshold": 0.98,
+  "pt_vision_avg_ms": 47.444849100429565,
+  "pt_vision_min_ms": 45.00625602668151,
+  "pt_vision_stddev_ms": 2.0940933522600513,
+  "pt_text_avg_ms": 16.325568594038486,
+  "pt_text_min_ms": 15.47936099814251,
+  "pt_text_stddev_ms": 0.6824790074880319,
+  "tt_vision_avg_ms": 6.519247317919508,
+  "tt_vision_min_ms": 6.3351180288009346,
+  "tt_vision_stddev_ms": 0.3434357236252038,
+  "tt_text_avg_ms": 4.245411197189242,
+  "tt_text_min_ms": 4.065660003107041,
+  "tt_text_stddev_ms": 0.2717650418332865,
+  "tt_full_pipeline_ms": 19.847455027047545,
+  "vision_compile_ms": 172.24236798938364,
+  "vision_cached_ms": 6.600361957680434,
+  "text_compile_ms": 95.24855704512447,
+  "text_cached_ms": 4.684767976868898,
+  "vision_fps": 153.39194100694598,
+  "vision_pcc": 0.9956253170967102,
+  "text_pcc": 0.9992915987968445,
+  "logits_pcc": 0.994353175163269,
   "predicted_text": "a photo of a cat",
   "prediction_correct": true,
   "tt_logits": [
     [
-      26.0,
-      20.375,
-      20.25
+      24.25,
+      18.5,
+      18.375
     ]
   ],
   "ref_logits": [
@@ -40,8 +45,8 @@
   "tt_probs": [
     [
       0.9921875,
-      0.0035858154296875,
-      0.0031585693359375
+      0.0031585693359375,
+      0.0027923583984375
     ]
   ],
   "ref_probs": [
@@ -51,10 +56,10 @@
       0.0022521736100316048
     ]
   ],
-  "speedup_vision_vs_cpu": 10.005848666733637,
-  "speedup_text_vs_cpu": 4.742105420277869,
-  "speedup_vision_vs_stage1": 1.994264641176533,
-  "speedup_text_vs_stage1": 3.3736137589060156,
-  "stage1_vision_avg_ms": 13.159550102136564,
-  "stage1_text_avg_ms": 14.100738300476223
+  "speedup_vision_vs_cpu": 7.277657494296546,
+  "speedup_text_vs_cpu": 3.8454622734417696,
+  "speedup_vision_vs_stage1": 2.1029988146560896,
+  "speedup_text_vs_stage1": 2.3534920274676803,
+  "stage1_vision_avg_ms": 13.709969382034615,
+  "stage1_text_avg_ms": 9.9915414059069
 }

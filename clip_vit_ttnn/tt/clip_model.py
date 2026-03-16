@@ -9,10 +9,11 @@
 # Reference: OWL-ViT TTNN implementation in tt-metal
 
 import os
+import time
 import torch
 import torch.nn.functional as F
 import ttnn
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .weight_loader import CLIPTTNNConfig
 
@@ -23,6 +24,34 @@ from .weight_loader import CLIPTTNNConfig
 # ---------------------------------------------------------------------------
 _ON_TTSIM = bool(os.environ.get("TT_METAL_SIMULATOR", ""))
 _USE_MANUAL_SOFTMAX = _ON_TTSIM
+
+
+def _quick_gelu(x, memory_config=None):
+    """QuickGELU activation: x * sigmoid(1.702 * x).
+
+    CLIP uses QuickGELU, not standard GELU. The difference matters for PCC.
+    """
+    scaled = ttnn.mul(x, 1.702, memory_config=memory_config)
+    gate = ttnn.sigmoid(scaled, memory_config=memory_config)
+    ttnn.deallocate(scaled)
+    result = ttnn.multiply(x, gate, memory_config=memory_config)
+    ttnn.deallocate(gate)
+    return result
+
+
+def _tick(timing_dict, device, key, t0_holder):
+    """Record elapsed time for previous op, start timing next op.
+
+    When timing_dict is None, this is a no-op (zero overhead).
+    t0_holder is a 1-element list so it's mutable across calls.
+    """
+    if timing_dict is None:
+        return
+    ttnn.synchronize_device(device)
+    now = time.perf_counter()
+    if t0_holder[0] is not None and key is not None:
+        timing_dict[key] = (now - t0_holder[0]) * 1000
+    t0_holder[0] = now
 
 
 def _softmax(x, dim=-1, memory_config=None):
@@ -261,13 +290,19 @@ def encoder_layer_stage1(
     config: CLIPTTNNConfig,
     causal_mask: Optional[ttnn.Tensor] = None,
     is_vision: bool = True,
+    device=None,
+    timing_dict: Optional[Dict] = None,
 ) -> ttnn.Tensor:
     """Run a single transformer encoder layer (Stage 1: basic, DRAM).
 
     Works for both vision and text encoder layers.
+    Pass timing_dict={} and device to enable per-op profiling.
     """
     memory_config = ttnn.DRAM_MEMORY_CONFIG
     compute_config = config.get_compute_kernel_config()
+
+    t0 = [None]
+    _tick(timing_dict, device, None, t0)
 
     # --- Layer Norm 1 ---
     residual = hidden_states
@@ -278,9 +313,10 @@ def encoder_layer_stage1(
         epsilon=config.layer_norm_eps,
         memory_config=memory_config,
     )
+    _tick(timing_dict, device, "layer_norm1", t0)
 
     # --- Self-Attention ---
-    # Fused QKV projection
+    # QKV projection + split heads
     qkv = ttnn.linear(
         hidden_states,
         layer_params["self_attn"]["qkv_weight"],
@@ -290,37 +326,39 @@ def encoder_layer_stage1(
     )
     ttnn.deallocate(hidden_states)
 
-    # Split into Q, K, V and reshape for multi-head attention
     q, k, v = ttnn.transformer.split_query_key_value_and_split_heads(
         qkv, num_heads=num_heads
     )
     ttnn.deallocate(qkv)
+    _tick(timing_dict, device, "qkv_linear", t0)
 
-    # Attention scores: Q @ K^T
+    # Attention scores: Q @ K^T + scale + mask
     head_dim = q.shape[-1]
     attention_scores = ttnn.matmul(q, k, memory_config=memory_config, compute_kernel_config=compute_config)
     ttnn.deallocate(k)
 
-    # Scale
     scale = head_dim ** -0.5
     attention_scores = ttnn.mul(attention_scores, scale, memory_config=memory_config)
 
-    # Apply causal mask (text encoder only)
     if causal_mask is not None:
         attention_scores = ttnn.add(attention_scores, causal_mask, memory_config=memory_config)
+    _tick(timing_dict, device, "attn_scores", t0)
 
     # Softmax
     attention_probs = _softmax(attention_scores, dim=-1, memory_config=memory_config)
     ttnn.deallocate(attention_scores)
+    _tick(timing_dict, device, "softmax", t0)
 
-    # Attention output: probs @ V
+    # Attention context: probs @ V
     context = ttnn.matmul(attention_probs, v, memory_config=memory_config, compute_kernel_config=compute_config)
     ttnn.deallocate(attention_probs)
     ttnn.deallocate(v)
     ttnn.deallocate(q)
+    _tick(timing_dict, device, "attn_context", t0)
 
     # Concatenate heads
     context = ttnn.transformer.concatenate_heads(context, memory_config=memory_config)
+    _tick(timing_dict, device, "concat_heads", t0)
 
     # Output projection
     attn_output = ttnn.linear(
@@ -331,11 +369,13 @@ def encoder_layer_stage1(
         compute_kernel_config=compute_config,
     )
     ttnn.deallocate(context)
+    _tick(timing_dict, device, "out_proj", t0)
 
     # Residual connection
     hidden_states = ttnn.add(residual, attn_output, memory_config=memory_config)
     ttnn.deallocate(residual)
     ttnn.deallocate(attn_output)
+    _tick(timing_dict, device, "residual1_add", t0)
 
     # --- Layer Norm 2 ---
     residual = hidden_states
@@ -346,6 +386,7 @@ def encoder_layer_stage1(
         epsilon=config.layer_norm_eps,
         memory_config=memory_config,
     )
+    _tick(timing_dict, device, "layer_norm2", t0)
 
     # --- MLP ---
     # fc1
@@ -357,9 +398,11 @@ def encoder_layer_stage1(
         compute_kernel_config=compute_config,
     )
     ttnn.deallocate(hidden_states)
+    _tick(timing_dict, device, "fc1_linear", t0)
 
-    # GELU activation
-    mlp = ttnn.gelu(mlp, memory_config=memory_config)
+    # QuickGELU activation: x * sigmoid(1.702 * x)
+    mlp = _quick_gelu(mlp, memory_config=memory_config)
+    _tick(timing_dict, device, "quick_gelu", t0)
 
     # fc2
     mlp = ttnn.linear(
@@ -369,11 +412,13 @@ def encoder_layer_stage1(
         memory_config=memory_config,
         compute_kernel_config=compute_config,
     )
+    _tick(timing_dict, device, "fc2_linear", t0)
 
     # Residual connection
     hidden_states = ttnn.add(residual, mlp, memory_config=memory_config)
     ttnn.deallocate(residual)
     ttnn.deallocate(mlp)
+    _tick(timing_dict, device, "residual2_add", t0)
 
     return hidden_states
 
@@ -389,23 +434,24 @@ def encoder_layer_stage2(
     config: CLIPTTNNConfig,
     causal_mask: Optional[ttnn.Tensor] = None,
     is_vision: bool = True,
+    device=None,
+    timing_dict: Optional[Dict] = None,
 ) -> ttnn.Tensor:
     """Run a single transformer encoder layer (Stage 2: L1 + LoFi + fusion).
 
     Optimizations vs Stage 1:
     - bfloat8_b weights for linear ops (2x smaller, faster matmul)
     - L1 interleaved memory for all intermediates (~16x bandwidth vs DRAM)
-    - Fused GELU activation in fc1 linear (no intermediate write/read)
     - LoFi/HiFi2 math fidelity (faster compute)
     - Program cache enabled (reuse compiled kernels across layers)
 
-    Note: HEIGHT_SHARDED is not used because ttnn.layer_norm does not support
-    sharded inputs. Sharding would require LayerNormShardedMultiCoreProgramConfig
-    which needs careful tuning per tensor shape. L1 interleaved already provides
-    the major bandwidth improvement.
+    Pass timing_dict={} and device to enable per-op profiling.
     """
     compute_config = config.get_compute_kernel_config()
     memory_config = config.get_memory_config()  # L1 interleaved for stage 2
+
+    t0 = [None]
+    _tick(timing_dict, device, None, t0)
 
     # --- Layer Norm 1 ---
     residual = hidden_states
@@ -416,9 +462,10 @@ def encoder_layer_stage2(
         epsilon=config.layer_norm_eps,
         memory_config=memory_config,
     )
+    _tick(timing_dict, device, "layer_norm1", t0)
 
     # --- Self-Attention ---
-    # Fused QKV projection
+    # QKV projection + split heads
     qkv = ttnn.linear(
         hidden_states,
         layer_params["self_attn"]["qkv_weight"],
@@ -432,7 +479,9 @@ def encoder_layer_stage2(
         qkv, num_heads=num_heads
     )
     ttnn.deallocate(qkv)
+    _tick(timing_dict, device, "qkv_linear", t0)
 
+    # Attention scores: Q @ K^T + scale + mask
     head_dim = q.shape[-1]
     attention_scores = ttnn.matmul(
         q, k, memory_config=memory_config, compute_kernel_config=compute_config
@@ -446,8 +495,9 @@ def encoder_layer_stage2(
         attention_scores = ttnn.add(
             attention_scores, causal_mask, memory_config=memory_config
         )
+    _tick(timing_dict, device, "attn_scores", t0)
 
-    # Softmax — manual decomposition on ttsim (SFPLOADMACRO not supported)
+    # Softmax
     if _USE_MANUAL_SOFTMAX:
         attention_probs = _softmax(
             attention_scores, dim=-1, memory_config=memory_config
@@ -456,7 +506,9 @@ def encoder_layer_stage2(
             ttnn.deallocate(attention_scores)
     else:
         attention_probs = ttnn.softmax_in_place(attention_scores)
+    _tick(timing_dict, device, "softmax", t0)
 
+    # Attention context: probs @ V
     context = ttnn.matmul(
         attention_probs, v,
         memory_config=memory_config,
@@ -465,10 +517,13 @@ def encoder_layer_stage2(
     ttnn.deallocate(attention_probs)
     ttnn.deallocate(v)
     ttnn.deallocate(q)
+    _tick(timing_dict, device, "attn_context", t0)
 
+    # Concatenate heads
     context = ttnn.transformer.concatenate_heads(
         context, memory_config=memory_config
     )
+    _tick(timing_dict, device, "concat_heads", t0)
 
     # Output projection
     attn_output = ttnn.linear(
@@ -479,11 +534,13 @@ def encoder_layer_stage2(
         compute_kernel_config=compute_config,
     )
     ttnn.deallocate(context)
+    _tick(timing_dict, device, "out_proj", t0)
 
     # Residual connection
     hidden_states = ttnn.add(residual, attn_output, memory_config=memory_config)
     ttnn.deallocate(residual)
     ttnn.deallocate(attn_output)
+    _tick(timing_dict, device, "residual1_add", t0)
 
     # --- Layer Norm 2 ---
     residual = hidden_states
@@ -494,17 +551,22 @@ def encoder_layer_stage2(
         epsilon=config.layer_norm_eps,
         memory_config=memory_config,
     )
+    _tick(timing_dict, device, "layer_norm2", t0)
 
-    # --- MLP with fused GELU ---
+    # --- MLP with QuickGELU ---
     mlp = ttnn.linear(
         hidden_states,
         layer_params["mlp"]["fc1_weight"],
         bias=layer_params["mlp"]["fc1_bias"],
-        activation="gelu",
         memory_config=memory_config,
         compute_kernel_config=compute_config,
     )
     ttnn.deallocate(hidden_states)
+    _tick(timing_dict, device, "fc1_linear", t0)
+
+    # QuickGELU: x * sigmoid(1.702 * x)
+    mlp = _quick_gelu(mlp, memory_config=memory_config)
+    _tick(timing_dict, device, "quick_gelu", t0)
 
     # fc2
     mlp = ttnn.linear(
@@ -514,11 +576,13 @@ def encoder_layer_stage2(
         memory_config=memory_config,
         compute_kernel_config=compute_config,
     )
+    _tick(timing_dict, device, "fc2_linear", t0)
 
     # Residual connection
     hidden_states = ttnn.add(residual, mlp, memory_config=memory_config)
     ttnn.deallocate(residual)
     ttnn.deallocate(mlp)
+    _tick(timing_dict, device, "residual2_add", t0)
 
     return hidden_states
 
@@ -634,7 +698,7 @@ def encoder_layer_stage3(
         memory_config=memory_config,
     )
 
-    # --- MLP with fused GELU ---
+    # --- MLP with QuickGELU ---
     mlp = ttnn.linear(
         hidden_states,
         layer_params["mlp"]["fc1_weight"],
@@ -642,9 +706,10 @@ def encoder_layer_stage3(
         memory_config=memory_config,
         core_grid=full_grid,
         compute_kernel_config=compute_config,
-        activation="gelu",
     )
     ttnn.deallocate(hidden_states)
+
+    mlp = _quick_gelu(mlp, memory_config=memory_config)
 
     mlp = ttnn.linear(
         mlp,
@@ -687,6 +752,7 @@ def run_vision_encoder(
     params: Dict,
     config: CLIPTTNNConfig,
     device,
+    layer_timings: Optional[List[Dict]] = None,
 ) -> Tuple[ttnn.Tensor, torch.Tensor]:
     """Run the full CLIP vision encoder.
 
@@ -695,6 +761,7 @@ def run_vision_encoder(
         params: vision encoder params from weight_loader
         config: model config
         device: TTNN device
+        layer_timings: optional list of dicts (one per layer) for per-op profiling
 
     Returns:
         (vision_embedding, vision_embedding_torch):
@@ -723,10 +790,8 @@ def run_vision_encoder(
     )
 
     # Step 3: Encoder layers
-    if config.stage >= 2:
-        device.enable_program_cache()
-
     for i in range(config.vision_num_layers):
+        layer_td = layer_timings[i] if layer_timings is not None else None
         hidden_states = encoder_layer_fn(
             hidden_states,
             params["layers"][i],
@@ -734,6 +799,8 @@ def run_vision_encoder(
             config=config,
             causal_mask=None,  # Vision encoder: no causal mask
             is_vision=True,
+            device=device if layer_td is not None else None,
+            timing_dict=layer_td,
         )
 
     # Step 4: Post-layer norm (on CLS token)
@@ -795,6 +862,7 @@ def run_text_encoder(
     params: Dict,
     config: CLIPTTNNConfig,
     device,
+    layer_timings: Optional[List[Dict]] = None,
 ) -> Tuple[ttnn.Tensor, torch.Tensor]:
     """Run the full CLIP text encoder.
 
@@ -804,6 +872,7 @@ def run_text_encoder(
         params: text encoder params from weight_loader
         config: model config
         device: TTNN device
+        layer_timings: optional list of dicts (one per layer) for per-op profiling
 
     Returns:
         (text_embedding, text_embedding_torch):
@@ -826,6 +895,7 @@ def run_text_encoder(
 
     # Step 3: Encoder layers
     for i in range(config.text_num_layers):
+        layer_td = layer_timings[i] if layer_timings is not None else None
         if config.stage == 3:
             hidden_states = encoder_layer_fn(
                 hidden_states,
@@ -844,6 +914,8 @@ def run_text_encoder(
                 config=config,
                 causal_mask=causal_mask,
                 is_vision=False,
+                device=device if layer_td is not None else None,
+                timing_dict=layer_td,
             )
 
     # Deallocate causal mask

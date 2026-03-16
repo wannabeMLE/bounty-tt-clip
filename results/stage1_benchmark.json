@@ -1,33 +1,38 @@
 {
   "stage": 1,
-  "timestamp": "2026-03-14T00:26:52.409897",
+  "timestamp": "2026-03-16T19:51:08.020148",
   "hardware": "Tenstorrent Wormhole B0 (N300)",
   "model": "openai/clip-vit-base-patch32",
   "num_runs": 10,
-  "pt_vision_avg_ms": 63.39460110248182,
-  "pt_vision_min_ms": 53.94315800367622,
-  "pt_text_avg_ms": 21.45154190075118,
-  "pt_text_min_ms": 18.40270499815233,
-  "tt_vision_avg_ms": 13.159550102136564,
-  "tt_vision_min_ms": 10.780477001389954,
-  "tt_text_avg_ms": 14.100738300476223,
-  "tt_text_min_ms": 9.133745006693061,
-  "tt_full_pipeline_ms": 40.836770000169054,
-  "vision_compile_ms": 177.85807299515,
-  "vision_cached_ms": 8.549379999749362,
-  "text_compile_ms": 139.50274600210832,
-  "text_cached_ms": 10.891178004385438,
-  "vision_fps": 75.99043981280496,
-  "vision_pcc": 0.9685552716255188,
-  "text_pcc": 0.9895110726356506,
-  "logits_pcc": 0.9988426566123962,
+  "pcc_threshold": 0.99,
+  "pt_vision_avg_ms": 49.25671651144512,
+  "pt_vision_min_ms": 45.582373975776136,
+  "pt_vision_stddev_ms": 3.4907315349805623,
+  "pt_text_avg_ms": 16.662434017052874,
+  "pt_text_min_ms": 16.271601023618132,
+  "pt_text_stddev_ms": 0.5932197181056433,
+  "tt_vision_avg_ms": 13.709969382034615,
+  "tt_vision_min_ms": 11.635854956693947,
+  "tt_vision_stddev_ms": 3.9196300402952318,
+  "tt_text_avg_ms": 9.9915414059069,
+  "tt_text_min_ms": 9.914672002196312,
+  "tt_text_stddev_ms": 0.07872046007390557,
+  "tt_full_pipeline_ms": 42.826599965337664,
+  "vision_compile_ms": 176.6798229655251,
+  "vision_cached_ms": 12.090119998902082,
+  "text_compile_ms": 132.05107196699828,
+  "text_cached_ms": 10.594031016808003,
+  "vision_fps": 72.93962314098151,
+  "vision_pcc": 0.9990136027336121,
+  "text_pcc": 0.9999327063560486,
+  "logits_pcc": 0.9995481967926025,
   "predicted_text": "a photo of a cat",
   "prediction_correct": true,
   "tt_logits": [
     [
-      25.75,
-      20.375,
-      19.875
+      24.375,
+      19.0,
+      18.375
     ]
   ],
   "ref_logits": [
@@ -41,7 +46,7 @@
     [
       0.9921875,
       0.004608154296875,
-      0.0027923583984375
+      0.0024566650390625
     ]
   ],
   "ref_probs": [
@@ -51,6 +56,6 @@
       0.0022521736100316048
     ]
   ],
-  "speedup_vision_vs_cpu": 4.817383619534924,
-  "speedup_text_vs_cpu": 1.521306292169588
+  "speedup_vision_vs_cpu": 3.592766339506969,
+  "speedup_text_vs_cpu": 1.6676540025348048
 }

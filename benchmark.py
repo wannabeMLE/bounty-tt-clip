@@ -15,6 +15,7 @@ import argparse
 import datetime
 import json
 import os
+import statistics
 import sys
 import time
 
@@ -36,8 +37,18 @@ MODEL_NAME = "openai/clip-vit-base-patch32"
 IMAGE_URL = "http://images.cocodataset.org/val2017/000000039769.jpg"
 TEXTS = ["a photo of a cat", "a photo of a dog", "a photo of a car"]
 
-NUM_WARMUP = 2
+NUM_WARMUP = 1
 NUM_RUNS = 10
+
+# Stage-dependent PCC thresholds: higher precision → higher bar
+PCC_THRESHOLDS = {1: 0.99, 2: 0.98, 3: 0.97}
+
+# Stage configurations: (memory, math_fidelity, weight_dtype, activation)
+STAGE_CONFIG = {
+    1: ("DRAM interleaved", "HiFi4", "bfloat16", "QuickGELU (3 ops)"),
+    2: ("L1 interleaved", "LoFi", "bfloat8_b", "QuickGELU (3 ops)"),
+    3: ("L1 interleaved", "LoFi", "bfloat8_b", "QuickGELU (3 ops) + SDPA"),
+}
 
 
 def compute_pcc(a, b):
@@ -59,16 +70,25 @@ def _to_tensor(output):
     return output
 
 
-def load_stage1_results():
+def load_stage1_results(path=None):
     """Load Stage 1 benchmark results for cross-stage comparison."""
-    path = "results/stage1_benchmark.json"
-    if os.path.exists(path):
+    if path is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(script_dir, "results", "stage1_benchmark.json"),
+            "results/stage1_benchmark.json",
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                path = p
+                break
+    if path and os.path.exists(path):
         with open(path) as f:
             return json.load(f)
     return None
 
 
-def run_benchmark(stage, output_path=None):
+def run_benchmark(stage, output_path=None, stage1_json=None):
     print(f"{'='*65}")
     print(f"  CLIP-ViT TTNN Benchmark — Stage {stage}")
     print(f"  {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -125,21 +145,29 @@ def run_benchmark(stage, output_path=None):
         params = load_all_weights(hf_model, device, config)
         params["logit_scale"] = hf_model.logit_scale.data.clone()
 
+        # Enable program cache early — before any runs, so ALL ops get cached
+        if stage >= 2:
+            device.enable_program_cache()
+
         # =====================================================================
         # Tier 2: Compile time — first run includes kernel compilation
         # =====================================================================
         print(f"\n[Tier 2] Measuring compile time (first run)...")
+        ttnn.synchronize_device(device)
         t0 = time.perf_counter()
         tt_v, _ = run_vision_encoder(pixel_values, params["vision"], config, device)
         ttnn.deallocate(tt_v)
+        ttnn.synchronize_device(device)
         vision_compile_ms = (time.perf_counter() - t0) * 1000
 
+        ttnn.synchronize_device(device)
         t0 = time.perf_counter()
         tt_t, _ = run_text_encoder(
             text_inputs["input_ids"][0:1], text_inputs["attention_mask"][0:1],
             params["text"], config, device,
         )
         ttnn.deallocate(tt_t)
+        ttnn.synchronize_device(device)
         text_compile_ms = (time.perf_counter() - t0) * 1000
 
         print(f"  Vision compile: {vision_compile_ms:.1f} ms")
@@ -148,46 +176,55 @@ def run_benchmark(stage, output_path=None):
         # =====================================================================
         # Tier 2: Cached time — second run uses compiled kernels
         # =====================================================================
+        ttnn.synchronize_device(device)
         t0 = time.perf_counter()
         tt_v, _ = run_vision_encoder(pixel_values, params["vision"], config, device)
         ttnn.deallocate(tt_v)
+        ttnn.synchronize_device(device)
         vision_cached_ms = (time.perf_counter() - t0) * 1000
 
+        ttnn.synchronize_device(device)
         t0 = time.perf_counter()
         tt_t, _ = run_text_encoder(
             text_inputs["input_ids"][0:1], text_inputs["attention_mask"][0:1],
             params["text"], config, device,
         )
         ttnn.deallocate(tt_t)
+        ttnn.synchronize_device(device)
         text_cached_ms = (time.perf_counter() - t0) * 1000
 
         print(f"  Vision cached:  {vision_cached_ms:.1f} ms (compile overhead: {vision_compile_ms - vision_cached_ms:.1f} ms)")
         print(f"  Text cached:    {text_cached_ms:.1f} ms (compile overhead: {text_compile_ms - text_cached_ms:.1f} ms)")
 
         # =====================================================================
-        # Tier 1: Steady-state latency — avg/min over NUM_RUNS
+        # Tier 1: Steady-state latency (compile + cached runs above serve as warmup) — avg/min over NUM_RUNS
         # =====================================================================
         print(f"\n[Tier 1] Benchmarking vision encoder ({NUM_RUNS} runs)...")
         vision_times = []
         for _ in range(NUM_RUNS):
+            ttnn.synchronize_device(device)
             t0 = time.perf_counter()
             tt_v, vision_embed = run_vision_encoder(pixel_values, params["vision"], config, device)
             ttnn.deallocate(tt_v)
+            ttnn.synchronize_device(device)
             vision_times.append(time.perf_counter() - t0)
 
         print(f"[Tier 1] Benchmarking text encoder ({NUM_RUNS} runs)...")
         text_times = []
         for _ in range(NUM_RUNS):
+            ttnn.synchronize_device(device)
             t0 = time.perf_counter()
             tt_t, text_embed_single = run_text_encoder(
                 text_inputs["input_ids"][0:1], text_inputs["attention_mask"][0:1],
                 params["text"], config, device,
             )
             ttnn.deallocate(tt_t)
+            ttnn.synchronize_device(device)
             text_times.append(time.perf_counter() - t0)
 
         # Full pipeline (vision + 3 texts + similarity)
         print("[Tier 1] Full pipeline...")
+        ttnn.synchronize_device(device)
         t_full_start = time.perf_counter()
         tt_v, vision_embed_final = run_vision_encoder(pixel_values, params["vision"], config, device)
         ttnn.deallocate(tt_v)
@@ -204,6 +241,7 @@ def run_benchmark(stage, output_path=None):
 
         logits = compute_similarity(vision_embed_final, text_embed_all, params["logit_scale"])
         probs = logits.softmax(dim=-1)
+        ttnn.synchronize_device(device)
         t_full = time.perf_counter() - t_full_start
         predicted_idx = probs.argmax(dim=-1).item()
 
@@ -218,22 +256,35 @@ def run_benchmark(stage, output_path=None):
     # =====================================================================
     # Compute all metrics
     # =====================================================================
+    # Convert to ms lists for stddev
+    vision_times_ms = [t * 1000 for t in vision_times]
+    text_times_ms = [t * 1000 for t in text_times]
+    pt_vision_times_ms = [t * 1000 for t in pt_vision_times]
+    pt_text_times_ms = [t * 1000 for t in pt_text_times]
+
+    threshold = PCC_THRESHOLDS.get(stage, 0.98)
+
     r = {
         "stage": stage,
         "timestamp": datetime.datetime.now().isoformat(),
         "hardware": "Tenstorrent Wormhole B0 (N300)",
         "model": MODEL_NAME,
         "num_runs": NUM_RUNS,
+        "pcc_threshold": threshold,
         # PyTorch CPU
-        "pt_vision_avg_ms": sum(pt_vision_times) / len(pt_vision_times) * 1000,
-        "pt_vision_min_ms": min(pt_vision_times) * 1000,
-        "pt_text_avg_ms": sum(pt_text_times) / len(pt_text_times) * 1000,
-        "pt_text_min_ms": min(pt_text_times) * 1000,
+        "pt_vision_avg_ms": sum(pt_vision_times_ms) / len(pt_vision_times_ms),
+        "pt_vision_min_ms": min(pt_vision_times_ms),
+        "pt_vision_stddev_ms": statistics.stdev(pt_vision_times_ms),
+        "pt_text_avg_ms": sum(pt_text_times_ms) / len(pt_text_times_ms),
+        "pt_text_min_ms": min(pt_text_times_ms),
+        "pt_text_stddev_ms": statistics.stdev(pt_text_times_ms),
         # TTNN steady-state
-        "tt_vision_avg_ms": sum(vision_times) / len(vision_times) * 1000,
-        "tt_vision_min_ms": min(vision_times) * 1000,
-        "tt_text_avg_ms": sum(text_times) / len(text_times) * 1000,
-        "tt_text_min_ms": min(text_times) * 1000,
+        "tt_vision_avg_ms": sum(vision_times_ms) / len(vision_times_ms),
+        "tt_vision_min_ms": min(vision_times_ms),
+        "tt_vision_stddev_ms": statistics.stdev(vision_times_ms),
+        "tt_text_avg_ms": sum(text_times_ms) / len(text_times_ms),
+        "tt_text_min_ms": min(text_times_ms),
+        "tt_text_stddev_ms": statistics.stdev(text_times_ms),
         "tt_full_pipeline_ms": t_full * 1000,
         # Compile vs cached
         "vision_compile_ms": vision_compile_ms,
@@ -241,7 +292,7 @@ def run_benchmark(stage, output_path=None):
         "text_compile_ms": text_compile_ms,
         "text_cached_ms": text_cached_ms,
         # Throughput
-        "vision_fps": 1000.0 / (sum(vision_times) / len(vision_times) * 1000),
+        "vision_fps": 1000.0 / (sum(vision_times_ms) / len(vision_times_ms)),
         # PCC
         "vision_pcc": vision_pcc,
         "text_pcc": text_pcc,
@@ -260,7 +311,7 @@ def run_benchmark(stage, output_path=None):
     r["speedup_text_vs_cpu"] = r["pt_text_avg_ms"] / r["tt_text_avg_ms"]
 
     # Speedup vs Stage 1
-    stage1 = load_stage1_results()
+    stage1 = load_stage1_results(stage1_json)
     if stage1 and stage > 1:
         r["speedup_vision_vs_stage1"] = stage1["tt_vision_avg_ms"] / r["tt_vision_avg_ms"]
         r["speedup_text_vs_stage1"] = stage1["tt_text_avg_ms"] / r["tt_text_avg_ms"]
@@ -275,11 +326,11 @@ def run_benchmark(stage, output_path=None):
     print(f"{'='*65}")
 
     print(f"\n  --- Latency (Tier 1) ---")
-    print(f"  {'':30s} {'avg':>8s} {'min':>8s}")
-    print(f"  {'PyTorch CPU vision':30s} {r['pt_vision_avg_ms']:7.1f}ms {r['pt_vision_min_ms']:7.1f}ms")
-    print(f"  {'PyTorch CPU text':30s} {r['pt_text_avg_ms']:7.1f}ms {r['pt_text_min_ms']:7.1f}ms")
-    print(f"  {'TTNN vision':30s} {r['tt_vision_avg_ms']:7.1f}ms {r['tt_vision_min_ms']:7.1f}ms")
-    print(f"  {'TTNN text':30s} {r['tt_text_avg_ms']:7.1f}ms {r['tt_text_min_ms']:7.1f}ms")
+    print(f"  {'':30s} {'avg':>8s} {'min':>8s} {'stddev':>8s}")
+    print(f"  {'PyTorch CPU vision':30s} {r['pt_vision_avg_ms']:7.1f}ms {r['pt_vision_min_ms']:7.1f}ms {r['pt_vision_stddev_ms']:7.2f}ms")
+    print(f"  {'PyTorch CPU text':30s} {r['pt_text_avg_ms']:7.1f}ms {r['pt_text_min_ms']:7.1f}ms {r['pt_text_stddev_ms']:7.2f}ms")
+    print(f"  {'TTNN vision':30s} {r['tt_vision_avg_ms']:7.1f}ms {r['tt_vision_min_ms']:7.1f}ms {r['tt_vision_stddev_ms']:7.2f}ms")
+    print(f"  {'TTNN text (1 seq)':30s} {r['tt_text_avg_ms']:7.1f}ms {r['tt_text_min_ms']:7.1f}ms {r['tt_text_stddev_ms']:7.2f}ms")
     print(f"  {'TTNN full pipeline':30s} {r['tt_full_pipeline_ms']:7.1f}ms")
     print(f"  {'Throughput (vision)':30s} {r['vision_fps']:7.1f} img/s")
 
@@ -295,8 +346,8 @@ def run_benchmark(stage, output_path=None):
     print(f"  {'Vision':20s} {r['vision_compile_ms']:9.1f}ms {r['vision_cached_ms']:9.1f}ms {r['vision_compile_ms']-r['vision_cached_ms']:9.1f}ms")
     print(f"  {'Text':20s} {r['text_compile_ms']:9.1f}ms {r['text_cached_ms']:9.1f}ms {r['text_compile_ms']-r['text_cached_ms']:9.1f}ms")
 
-    print(f"\n  --- Accuracy (PCC) ---")
-    pcc_ok = lambda v: "PASS" if v >= 0.98 else "FAIL"
+    print(f"\n  --- Accuracy (PCC, threshold >= {threshold}) ---")
+    pcc_ok = lambda v: "PASS" if v >= threshold else "FAIL"
     print(f"  {'Vision embedding':20s} {r['vision_pcc']:.6f}  {pcc_ok(r['vision_pcc'])}")
     print(f"  {'Text embedding':20s} {r['text_pcc']:.6f}  {pcc_ok(r['text_pcc'])}")
     print(f"  {'Logits':20s} {r['logits_pcc']:.6f}  {pcc_ok(r['logits_pcc'])}")
@@ -304,13 +355,9 @@ def run_benchmark(stage, output_path=None):
     print(f"\n  --- Prediction ---")
     print(f"  Predicted: \"{r['predicted_text']}\" — {'CORRECT' if r['prediction_correct'] else 'WRONG'}")
 
-    config_desc = {
-        1: "DRAM interleaved, HiFi4, bfloat16 weights, separate GELU",
-        2: "L1 interleaved, LoFi, bfloat8_b weights, fused GELU",
-        3: "L1 interleaved, LoFi, bfloat8_b weights, fused GELU, SDPA",
-    }
+    mem, math, wdtype, gelu = STAGE_CONFIG.get(stage, ("?", "?", "?", "?"))
     print(f"\n  --- Config ---")
-    print(f"  {config_desc.get(stage, 'unknown')}")
+    print(f"  {mem}, {math}, {wdtype}, {gelu}")
     print(f"{'='*65}")
 
     # Save JSON (for cross-stage comparison)
@@ -331,6 +378,7 @@ def run_benchmark(stage, output_path=None):
 def write_markdown(r, path):
     speedup_v = r["speedup_vision_vs_cpu"]
     speedup_t = r["speedup_text_vs_cpu"]
+    threshold = r.get("pcc_threshold", 0.98)
 
     stage_cmp = ""
     if "speedup_vision_vs_stage1" in r:
@@ -343,12 +391,8 @@ def write_markdown(r, path):
 | Text encoder | {r['stage1_text_avg_ms']:.1f} ms | {r['tt_text_avg_ms']:.1f} ms | {r['speedup_text_vs_stage1']:.2f}x |
 """
 
-    config_desc = {
-        1: ("DRAM interleaved", "HiFi4", "bfloat16", "separate"),
-        2: ("L1 interleaved", "LoFi", "bfloat8_b", "fused in fc1"),
-        3: ("L1 interleaved", "LoFi", "bfloat8_b", "fused in fc1 + SDPA"),
-    }
-    mem, math, wdtype, gelu = config_desc.get(r["stage"], ("?", "?", "?", "?"))
+    mem, math, wdtype, gelu = STAGE_CONFIG.get(r["stage"], ("?", "?", "?", "?"))
+    pcc_ok = lambda v: "PASS" if v >= threshold else "FAIL"
 
     md = f"""# CLIP-ViT TTNN Benchmark — Stage {r['stage']}
 
@@ -359,13 +403,15 @@ def write_markdown(r, path):
 
 ## Latency
 
-| Component | PyTorch CPU (avg) | PyTorch CPU (min) | TTNN (avg) | TTNN (min) | Speedup vs CPU |
-|-----------|-------------------|-------------------|------------|------------|----------------|
-| Vision encoder | {r['pt_vision_avg_ms']:.1f} ms | {r['pt_vision_min_ms']:.1f} ms | {r['tt_vision_avg_ms']:.1f} ms | {r['tt_vision_min_ms']:.1f} ms | {speedup_v:.2f}x |
-| Text encoder | {r['pt_text_avg_ms']:.1f} ms | {r['pt_text_min_ms']:.1f} ms | {r['tt_text_avg_ms']:.1f} ms | {r['tt_text_min_ms']:.1f} ms | {speedup_t:.2f}x |
-| Full pipeline | — | — | {r['tt_full_pipeline_ms']:.1f} ms | — | — |
+| Component | PyTorch CPU (avg) | TTNN (avg) | TTNN (min) | TTNN (stddev) | Speedup vs CPU |
+|-----------|-------------------|------------|------------|---------------|----------------|
+| Vision encoder | {r['pt_vision_avg_ms']:.1f} ms | {r['tt_vision_avg_ms']:.1f} ms | {r['tt_vision_min_ms']:.1f} ms | {r['tt_vision_stddev_ms']:.2f} ms | {speedup_v:.2f}x |
+| Text encoder (1 seq) | {r['pt_text_avg_ms']:.1f} ms | {r['tt_text_avg_ms']:.1f} ms | {r['tt_text_min_ms']:.1f} ms | {r['tt_text_stddev_ms']:.2f} ms | {speedup_t:.2f}x |
+| Full pipeline | — | {r['tt_full_pipeline_ms']:.1f} ms | — | — | — |
 
 **Throughput:** {r['vision_fps']:.1f} images/sec (vision encoder)
+
+> **Note:** Text encoder benchmarked per single sequence. Full pipeline encodes {len(r.get('tt_probs', [[]])[0])} texts serially.
 {stage_cmp}
 ## Compile vs Cached (Program Cache)
 
@@ -374,13 +420,13 @@ def write_markdown(r, path):
 | Vision encoder | {r['vision_compile_ms']:.1f} ms | {r['vision_cached_ms']:.1f} ms | {r['vision_compile_ms'] - r['vision_cached_ms']:.1f} ms |
 | Text encoder | {r['text_compile_ms']:.1f} ms | {r['text_cached_ms']:.1f} ms | {r['text_compile_ms'] - r['text_cached_ms']:.1f} ms |
 
-## Accuracy (PCC)
+## Accuracy (PCC >= {threshold})
 
 | Metric | PCC | Status |
 |--------|-----|--------|
-| Vision embedding | {r['vision_pcc']:.6f} | {'PASS' if r['vision_pcc'] >= 0.98 else 'FAIL'} (>= 0.98) |
-| Text embedding | {r['text_pcc']:.6f} | {'PASS' if r['text_pcc'] >= 0.98 else 'FAIL'} (>= 0.98) |
-| Logits | {r['logits_pcc']:.6f} | {'PASS' if r['logits_pcc'] >= 0.98 else 'FAIL'} (>= 0.98) |
+| Vision embedding | {r['vision_pcc']:.6f} | {pcc_ok(r['vision_pcc'])} |
+| Text embedding | {r['text_pcc']:.6f} | {pcc_ok(r['text_pcc'])} |
+| Logits | {r['logits_pcc']:.6f} | {pcc_ok(r['logits_pcc'])} |
 
 ## Prediction
 
@@ -398,7 +444,7 @@ def write_markdown(r, path):
 | Memory | {mem} |
 | Math fidelity | {math} |
 | Weight dtype | {wdtype} |
-| GELU | {gelu} |
+| Activation | {gelu} |
 | Compute grid | 8x7 (56 cores) |
 | Dispatch | WORKER |
 """
@@ -411,9 +457,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CLIP-ViT TTNN Benchmark")
     parser.add_argument("--stage", type=int, default=1, help="Stage (1, 2, or 3)")
     parser.add_argument("--output", type=str, default=None, help="Output markdown path")
+    parser.add_argument("--stage1-json", type=str, default=None,
+                        help="Path to stage 1 JSON for cross-stage comparison")
     args = parser.parse_args()
 
     if args.output is None:
         args.output = f"results/stage{args.stage}_benchmark.md"
 
-    run_benchmark(args.stage, args.output)
+    run_benchmark(args.stage, args.output, stage1_json=args.stage1_json)
