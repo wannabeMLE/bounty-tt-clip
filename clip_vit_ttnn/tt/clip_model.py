@@ -554,6 +554,9 @@ def encoder_layer_stage2(
     _tick(timing_dict, device, "layer_norm2", t0)
 
     # --- MLP with QuickGELU ---
+    # NOTE: HEIGHT_SHARDED was tested but causes 14x matmul regression at this
+    # tensor size ([1,64,768] = 2 tile-rows). Sharding restricts matmul to 2 cores
+    # while L1 interleaved uses the full core grid. See test_reshard_cost.py.
     mlp = ttnn.linear(
         hidden_states,
         layer_params["mlp"]["fc1_weight"],

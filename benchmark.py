@@ -146,8 +146,7 @@ def run_benchmark(stage, output_path=None, stage1_json=None):
         params["logit_scale"] = hf_model.logit_scale.data.clone()
 
         # Enable program cache early — before any runs, so ALL ops get cached
-        if stage >= 2:
-            device.enable_program_cache()
+        device.enable_program_cache()
 
         # =====================================================================
         # Tier 2: Compile time — first run includes kernel compilation
@@ -196,8 +195,18 @@ def run_benchmark(stage, output_path=None, stage1_json=None):
         print(f"  Vision cached:  {vision_cached_ms:.1f} ms (compile overhead: {vision_compile_ms - vision_cached_ms:.1f} ms)")
         print(f"  Text cached:    {text_cached_ms:.1f} ms (compile overhead: {text_compile_ms - text_cached_ms:.1f} ms)")
 
+        # Warmup: one extra untimed run to stabilize program cache
+        # (sharded kernels may need additional compilation beyond compile+cached)
+        tt_v, _ = run_vision_encoder(pixel_values, params["vision"], config, device)
+        ttnn.deallocate(tt_v)
+        tt_t, _ = run_text_encoder(
+            text_inputs["input_ids"][0:1], text_inputs["attention_mask"][0:1],
+            params["text"], config, device,
+        )
+        ttnn.deallocate(tt_t)
+
         # =====================================================================
-        # Tier 1: Steady-state latency (compile + cached runs above serve as warmup) — avg/min over NUM_RUNS
+        # Tier 1: Steady-state latency — avg/min over NUM_RUNS
         # =====================================================================
         print(f"\n[Tier 1] Benchmarking vision encoder ({NUM_RUNS} runs)...")
         vision_times = []

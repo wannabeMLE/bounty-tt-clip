@@ -160,8 +160,7 @@ def main():
         params = load_all_weights(hf_model, device, config)
 
         # Enable program cache BEFORE any runs so ALL ops get cached
-        if config.stage >= 2:
-            device.enable_program_cache()
+        device.enable_program_cache()
 
         # Warmup (compile kernels + populate program cache)
         print("Warmup run (compiling kernels)...")
