@@ -100,4 +100,4 @@ Already implemented in Stage 2 at `clip_model.py` line 508: `ttnn.softmax_in_pla
 | Activation fusion | N/A — no QuickGELU fused op in TTNN |
 | softmax_in_place | Done |
 | core_grid hint | Tested — no benefit |
-| On-device patch embedding | Done |
+| On-device patch embedding | Deferred to Stage 3 — fold+linear produces PCC -0.02 vs CPU conv2d, needs reshape fix |

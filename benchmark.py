@@ -37,8 +37,8 @@ MODEL_NAME = "openai/clip-vit-base-patch32"
 IMAGE_URL = "http://images.cocodataset.org/val2017/000000039769.jpg"
 TEXTS = ["a photo of a cat", "a photo of a dog", "a photo of a car"]
 
-NUM_WARMUP = 1
-NUM_RUNS = 10
+NUM_WARMUP = 3
+NUM_RUNS = 20
 
 # Stage-dependent PCC thresholds: higher precision → higher bar
 PCC_THRESHOLDS = {1: 0.99, 2: 0.98, 3: 0.97}

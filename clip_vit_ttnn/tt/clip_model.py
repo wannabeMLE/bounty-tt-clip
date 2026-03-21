@@ -776,8 +776,8 @@ def run_vision_encoder(
     encoder_layer_fn = _get_encoder_layer_fn(config.stage)
 
     # Step 1: Patch embeddings
-    # Stage 1 & 2: CPU conv2d (simple, avoids fold/concat shape issues)
-    # Stage 3: on-device fold+linear (full optimization)
+    # Stage 1-2: CPU conv2d (fold+linear on-device path has PCC issues, see results/stage2_sharding_investigation.md)
+    # Stage 3: on-device fold+linear (requires fixing fold reshape to match conv2d output)
     if config.stage >= 3:
         hidden_states = vision_patch_embeddings_stage2(pixel_values, params, config, device)
     else:

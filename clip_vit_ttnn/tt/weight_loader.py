@@ -323,8 +323,8 @@ def load_vision_encoder_weights(hf_model, device, config: CLIPTTNNConfig) -> Dic
             params["patch_linear_bias"] = None
         # CLS token and position embeddings on device for stage 2+
         cls_data = vision.embeddings.class_embedding.data.clone()  # [768]
-        # Reshape to [1, 1, 768] for concat
-        params["cls_token_tt"] = _to_ttnn_weight(cls_data.unsqueeze(0), device, dtype)  # [1, 1, 768]
+        # Reshape to [1, 1, 768] for concat along dim=1
+        params["cls_token_tt"] = _to_ttnn_weight(cls_data.unsqueeze(0).unsqueeze(0), device, dtype)  # [1, 1, 768]
         pos_data = vision.embeddings.position_embedding.weight.data.clone()  # [50, 768]
         params["position_embeddings_tt"] = _to_ttnn_weight(pos_data.unsqueeze(0), device, dtype)  # [1, 50, 768]
 

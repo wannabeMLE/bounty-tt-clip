@@ -1,19 +1,19 @@
 # CLIP-ViT TTNN Benchmark — Stage 2
 
-**Date:** 2026-03-19T13:45:25.334482
+**Date:** 2026-03-21T00:22:57.514915
 **Hardware:** Tenstorrent Wormhole B0 (N300)
 **Model:** openai/clip-vit-base-patch32
-**Runs:** 10 (after compile warmup)
+**Runs:** 20 (after compile warmup)
 
 ## Latency
 
 | Component | PyTorch CPU (avg) | TTNN (avg) | TTNN (min) | TTNN (stddev) | Speedup vs CPU |
 |-----------|-------------------|------------|------------|---------------|----------------|
-| Vision encoder | 58.5 ms | 7.6 ms | 6.3 ms | 2.24 ms | 7.66x |
-| Text encoder (1 seq) | 18.1 ms | 4.4 ms | 4.1 ms | 0.33 ms | 4.15x |
-| Full pipeline | — | 23.1 ms | — | — | — |
+| Vision encoder | 55.3 ms | 6.9 ms | 6.4 ms | 1.01 ms | 8.06x |
+| Text encoder (1 seq) | 28.5 ms | 4.4 ms | 4.1 ms | 0.19 ms | 6.48x |
+| Full pipeline | — | 20.6 ms | — | — | — |
 
-**Throughput:** 131.0 images/sec (vision encoder)
+**Throughput:** 145.9 images/sec (vision encoder)
 
 > **Note:** Text encoder benchmarked per single sequence. Full pipeline encodes 3 texts serially.
 
@@ -21,15 +21,15 @@
 
 | Component | Stage 1 (avg) | Stage 2 (avg) | Speedup |
 |-----------|---------------|-------------|---------|
-| Vision encoder | 13.7 ms | 7.6 ms | 1.80x |
-| Text encoder | 10.0 ms | 4.4 ms | 2.29x |
+| Vision encoder | 7.7 ms | 6.9 ms | 1.12x |
+| Text encoder | 4.2 ms | 4.4 ms | 0.97x |
 
 ## Compile vs Cached (Program Cache)
 
 | Component | First run (compile) | Cached run | Compile overhead |
 |-----------|--------------------:|----------:|-----------------:|
-| Vision encoder | 176.2 ms | 15.9 ms | 160.2 ms |
-| Text encoder | 98.4 ms | 4.1 ms | 94.2 ms |
+| Vision encoder | 172.7 ms | 6.7 ms | 166.0 ms |
+| Text encoder | 98.5 ms | 4.3 ms | 94.2 ms |
 
 ## Accuracy (PCC >= 0.98)
 
