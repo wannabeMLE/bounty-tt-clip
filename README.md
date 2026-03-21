@@ -17,7 +17,7 @@ This project implements the full CLIP (Contrastive Language-Image Pre-training) 
 |-------|--------|------|----------|
 | **Stage 1** | DRAM | HiFi4 | Baseline functional (bfloat16 weights) |
 | **Stage 2** | L1 interleaved | LoFi | bfloat8_b weights, softmax_in_place, program cache |
-| **Stage 3** | L1 interleaved | LoFi | SDPA, fused QKV, LayerNorm fusion, program configs |
+| **Stage 3** | L1 interleaved | LoFi | SDPA, program configs |
 
 ## Project Structure
 
@@ -25,6 +25,9 @@ This project implements the full CLIP (Contrastive Language-Image Pre-training) 
 bounty-tt-clip/
 ├── README.md
 ├── requirements.txt
+├── benchmark.py                # End-to-end benchmark (latency, PCC, speedup)
+├── profile_layers.py           # Per-layer profiling with sync barriers
+├── profile_tracy.py            # Tracy device profiler (requires Tracy build)
 │
 ├── clip_vit_ttnn/              # Core implementation
 │   ├── tt/
@@ -40,6 +43,7 @@ bounty-tt-clip/
 │   ├── generate_golden.py      # Generate golden reference tensors
 │   ├── validate_golden.py      # Per-layer validation against golden ref
 │   ├── validate_multi_image.py # Multi-image prediction test
+│   ├── validate_coco.py        # COCO zero-shot classification (20 or 5000 images)
 │   └── test_cpu.py             # CPU-only PyTorch reference test
 │
 ```
@@ -50,23 +54,23 @@ bounty-tt-clip/
 
 ### Accuracy (PCC vs PyTorch reference)
 
-| Stage | Vision PCC | Text PCC | Logits PCC | Threshold |
-|-------|-----------|----------|------------|-----------|
-| Stage 1 | 0.9990 | 0.9999 | 0.9996 | >= 0.99 |
-| Stage 2 | 0.9956 | 0.9993 | 0.9944 | >= 0.98 |
+| Stage | Vision PCC | Text PCC | Logits PCC | Threshold | COCO Match |
+|-------|-----------|----------|------------|-----------|------------|
+| Stage 1 | 0.9990 | 0.9999 | 0.9995 | >= 0.99 | 20/20 |
+| Stage 2 | 0.9956 | 0.9993 | 0.9944 | >= 0.98 | 20/20 |
 
 ### Performance
 
 | Metric | Stage 1 | Stage 2 |
 |--------|---------|---------|
-| Vision encoder (avg) | 7.7 ms | 6.9 ms |
-| Text encoder (1 seq, avg) | 4.2 ms | 4.4 ms |
-| Full pipeline | 19.1 ms | 20.6 ms |
-| Vision speedup vs CPU | 6.85x | 8.06x |
-| Throughput (vision) | 130.7 img/s | 145.9 img/s |
-| Vision vs Stage 1 | — | 1.12x faster |
+| Vision encoder (median) | 7.6 ms | **6.6 ms** |
+| Text encoder (1 seq, median) | 3.8 ms | 4.1 ms |
+| Full pipeline | 22.4 ms | **19.0 ms** |
+| Vision speedup vs CPU | 6.45x | **7.68x** |
+| Throughput (vision, median) | 132 img/s | **152 img/s** |
+| Vision vs Stage 1 | — | **1.16x faster** |
 
-> **Note:** Benchmark uses 20 timed runs with 3 warmup iterations to ensure program cache is fully populated. Results are sensitive to warmup — insufficient warmup causes Stage 2 to appear slower due to additional L1 kernel compilation paths.
+> **Note:** Benchmark uses 20 timed runs after program cache warmup. L1 interleaved memory causes intermittent latency spikes (~2-5% of runs), so **median** is used instead of mean for stable comparisons. Full investigation: [`results/stage1_vs_stage2_investigation.md`](results/stage1_vs_stage2_investigation.md).
 
 ### Stage 2 Optimizations Applied
 
@@ -105,17 +109,17 @@ Full benchmark data with all grid configurations: [`results/stage2_sharding_inve
 
 Per-layer timing is collected via host-side `time.perf_counter()` with `ttnn.synchronize_device()` barriers. Results in [`results/stage2_profile.txt`](results/stage2_profile.txt).
 
-Tracy-based device profiling (`TT_METAL_DEVICE_PROFILER=1`) requires a Tracy-enabled build of tt-metal which is not available in this environment. The standard TT perf sheet format requires Tracy kernel-level profiling data.
+Tracy device profiling was run after building tt-metal from source with `./build_metal.sh --release` (Tracy enabled by default). Full investigation: [`results/profiling_investigation.md`](results/profiling_investigation.md). Key finding: device kernels complete in **1.17 ms** for a full vision encoder pass — the bottleneck is host-side Python dispatch overhead (~5-6 ms), not kernel execution. Raw Tracy artifacts (178 MB `.tracy` file, device CSV reports) are in `results/profiler/.logs/`.
 
 **Per-layer breakdown (Stage 2 Vision, avg of 12 layers):**
 
 | Component | Time | % of Layer |
 |-----------|------|------------|
-| Attention (total) | 0.29 ms | 43.1% |
-| MLP (fc1 + QuickGELU + fc2) | 0.21 ms | 31.7% |
+| Attention (total) | 0.28 ms | 43.2% |
+| MLP (fc1 + QuickGELU + fc2) | 0.21 ms | 31.9% |
 | LayerNorm (×2) | 0.11 ms | 16.9% |
-| Residual adds (×2) | 0.06 ms | 8.3% |
-| **Total per layer** | **0.67 ms** | 100% |
+| Residual adds (×2) | 0.05 ms | 7.9% |
+| **Total per layer** | **0.66 ms** | 100% |
 
 ## Quick Start
 

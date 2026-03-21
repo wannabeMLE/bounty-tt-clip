@@ -37,7 +37,7 @@ MODEL_NAME = "openai/clip-vit-base-patch32"
 IMAGE_URL = "http://images.cocodataset.org/val2017/000000039769.jpg"
 TEXTS = ["a photo of a cat", "a photo of a dog", "a photo of a car"]
 
-NUM_WARMUP = 3
+NUM_WARMUP = 50        # Program cache compiles after 1 pass; extra warmup stabilizes host-side variance
 NUM_RUNS = 20
 
 # Stage-dependent PCC thresholds: higher precision → higher bar
@@ -195,15 +195,19 @@ def run_benchmark(stage, output_path=None, stage1_json=None):
         print(f"  Vision cached:  {vision_cached_ms:.1f} ms (compile overhead: {vision_compile_ms - vision_cached_ms:.1f} ms)")
         print(f"  Text cached:    {text_cached_ms:.1f} ms (compile overhead: {text_compile_ms - text_cached_ms:.1f} ms)")
 
-        # Warmup: one extra untimed run to stabilize program cache
-        # (sharded kernels may need additional compilation beyond compile+cached)
-        tt_v, _ = run_vision_encoder(pixel_values, params["vision"], config, device)
-        ttnn.deallocate(tt_v)
-        tt_t, _ = run_text_encoder(
-            text_inputs["input_ids"][0:1], text_inputs["attention_mask"][0:1],
-            params["text"], config, device,
-        )
-        ttnn.deallocate(tt_t)
+        # Warmup: additional untimed runs to stabilize.
+        # Program cache is populated by compile+cached above (2 passes);
+        # NUM_WARMUP more for insurance (all use cached kernels).
+        print(f"\n  Warmup: {NUM_WARMUP} additional runs to stabilize...")
+        for _ in range(NUM_WARMUP):
+            tt_v, _ = run_vision_encoder(pixel_values, params["vision"], config, device)
+            ttnn.deallocate(tt_v)
+            tt_t, _ = run_text_encoder(
+                text_inputs["input_ids"][0:1], text_inputs["attention_mask"][0:1],
+                params["text"], config, device,
+            )
+            ttnn.deallocate(tt_t)
+        ttnn.synchronize_device(device)
 
         # =====================================================================
         # Tier 1: Steady-state latency — avg/min over NUM_RUNS
@@ -283,16 +287,20 @@ def run_benchmark(stage, output_path=None, stage1_json=None):
         # PyTorch CPU
         "pt_vision_avg_ms": sum(pt_vision_times_ms) / len(pt_vision_times_ms),
         "pt_vision_min_ms": min(pt_vision_times_ms),
+        "pt_vision_median_ms": statistics.median(pt_vision_times_ms),
         "pt_vision_stddev_ms": statistics.stdev(pt_vision_times_ms),
         "pt_text_avg_ms": sum(pt_text_times_ms) / len(pt_text_times_ms),
         "pt_text_min_ms": min(pt_text_times_ms),
+        "pt_text_median_ms": statistics.median(pt_text_times_ms),
         "pt_text_stddev_ms": statistics.stdev(pt_text_times_ms),
         # TTNN steady-state
         "tt_vision_avg_ms": sum(vision_times_ms) / len(vision_times_ms),
         "tt_vision_min_ms": min(vision_times_ms),
+        "tt_vision_median_ms": statistics.median(vision_times_ms),
         "tt_vision_stddev_ms": statistics.stdev(vision_times_ms),
         "tt_text_avg_ms": sum(text_times_ms) / len(text_times_ms),
         "tt_text_min_ms": min(text_times_ms),
+        "tt_text_median_ms": statistics.median(text_times_ms),
         "tt_text_stddev_ms": statistics.stdev(text_times_ms),
         "tt_full_pipeline_ms": t_full * 1000,
         # Compile vs cached
@@ -315,17 +323,19 @@ def run_benchmark(stage, output_path=None, stage1_json=None):
         "ref_probs": ref_probs.tolist(),
     }
 
-    # Speedup vs CPU
-    r["speedup_vision_vs_cpu"] = r["pt_vision_avg_ms"] / r["tt_vision_avg_ms"]
-    r["speedup_text_vs_cpu"] = r["pt_text_avg_ms"] / r["tt_text_avg_ms"]
+    # Speedup vs CPU (use median — robust to L1 spikes)
+    r["speedup_vision_vs_cpu"] = r["pt_vision_median_ms"] / r["tt_vision_median_ms"]
+    r["speedup_text_vs_cpu"] = r["pt_text_median_ms"] / r["tt_text_median_ms"]
 
-    # Speedup vs Stage 1
+    # Speedup vs Stage 1 (use median for stable comparison)
     stage1 = load_stage1_results(stage1_json)
     if stage1 and stage > 1:
-        r["speedup_vision_vs_stage1"] = stage1["tt_vision_avg_ms"] / r["tt_vision_avg_ms"]
-        r["speedup_text_vs_stage1"] = stage1["tt_text_avg_ms"] / r["tt_text_avg_ms"]
-        r["stage1_vision_avg_ms"] = stage1["tt_vision_avg_ms"]
-        r["stage1_text_avg_ms"] = stage1["tt_text_avg_ms"]
+        s1_vision = stage1.get("tt_vision_median_ms", stage1["tt_vision_avg_ms"])
+        s1_text = stage1.get("tt_text_median_ms", stage1["tt_text_avg_ms"])
+        r["speedup_vision_vs_stage1"] = s1_vision / r["tt_vision_median_ms"]
+        r["speedup_text_vs_stage1"] = s1_text / r["tt_text_median_ms"]
+        r["stage1_vision_avg_ms"] = s1_vision
+        r["stage1_text_avg_ms"] = s1_text
 
     # =====================================================================
     # Print results
@@ -335,11 +345,11 @@ def run_benchmark(stage, output_path=None, stage1_json=None):
     print(f"{'='*65}")
 
     print(f"\n  --- Latency (Tier 1) ---")
-    print(f"  {'':30s} {'avg':>8s} {'min':>8s} {'stddev':>8s}")
-    print(f"  {'PyTorch CPU vision':30s} {r['pt_vision_avg_ms']:7.1f}ms {r['pt_vision_min_ms']:7.1f}ms {r['pt_vision_stddev_ms']:7.2f}ms")
-    print(f"  {'PyTorch CPU text':30s} {r['pt_text_avg_ms']:7.1f}ms {r['pt_text_min_ms']:7.1f}ms {r['pt_text_stddev_ms']:7.2f}ms")
-    print(f"  {'TTNN vision':30s} {r['tt_vision_avg_ms']:7.1f}ms {r['tt_vision_min_ms']:7.1f}ms {r['tt_vision_stddev_ms']:7.2f}ms")
-    print(f"  {'TTNN text (1 seq)':30s} {r['tt_text_avg_ms']:7.1f}ms {r['tt_text_min_ms']:7.1f}ms {r['tt_text_stddev_ms']:7.2f}ms")
+    print(f"  {'':30s} {'median':>8s} {'avg':>8s} {'min':>8s} {'stddev':>8s}")
+    print(f"  {'PyTorch CPU vision':30s} {r['pt_vision_median_ms']:7.1f}ms {r['pt_vision_avg_ms']:7.1f}ms {r['pt_vision_min_ms']:7.1f}ms {r['pt_vision_stddev_ms']:7.2f}ms")
+    print(f"  {'PyTorch CPU text':30s} {r['pt_text_median_ms']:7.1f}ms {r['pt_text_avg_ms']:7.1f}ms {r['pt_text_min_ms']:7.1f}ms {r['pt_text_stddev_ms']:7.2f}ms")
+    print(f"  {'TTNN vision':30s} {r['tt_vision_median_ms']:7.1f}ms {r['tt_vision_avg_ms']:7.1f}ms {r['tt_vision_min_ms']:7.1f}ms {r['tt_vision_stddev_ms']:7.2f}ms")
+    print(f"  {'TTNN text (1 seq)':30s} {r['tt_text_median_ms']:7.1f}ms {r['tt_text_avg_ms']:7.1f}ms {r['tt_text_min_ms']:7.1f}ms {r['tt_text_stddev_ms']:7.2f}ms")
     print(f"  {'TTNN full pipeline':30s} {r['tt_full_pipeline_ms']:7.1f}ms")
     print(f"  {'Throughput (vision)':30s} {r['vision_fps']:7.1f} img/s")
 
@@ -394,10 +404,10 @@ def write_markdown(r, path):
         stage_cmp = f"""
 ## Speedup vs Stage 1
 
-| Component | Stage 1 (avg) | Stage {r['stage']} (avg) | Speedup |
+| Component | Stage 1 (median) | Stage {r['stage']} (median) | Speedup |
 |-----------|---------------|-------------|---------|
-| Vision encoder | {r['stage1_vision_avg_ms']:.1f} ms | {r['tt_vision_avg_ms']:.1f} ms | {r['speedup_vision_vs_stage1']:.2f}x |
-| Text encoder | {r['stage1_text_avg_ms']:.1f} ms | {r['tt_text_avg_ms']:.1f} ms | {r['speedup_text_vs_stage1']:.2f}x |
+| Vision encoder | {r['stage1_vision_avg_ms']:.1f} ms | {r['tt_vision_median_ms']:.1f} ms | {r['speedup_vision_vs_stage1']:.2f}x |
+| Text encoder | {r['stage1_text_avg_ms']:.1f} ms | {r['tt_text_median_ms']:.1f} ms | {r['speedup_text_vs_stage1']:.2f}x |
 """
 
     mem, math, wdtype, gelu = STAGE_CONFIG.get(r["stage"], ("?", "?", "?", "?"))
@@ -412,10 +422,10 @@ def write_markdown(r, path):
 
 ## Latency
 
-| Component | PyTorch CPU (avg) | TTNN (avg) | TTNN (min) | TTNN (stddev) | Speedup vs CPU |
-|-----------|-------------------|------------|------------|---------------|----------------|
-| Vision encoder | {r['pt_vision_avg_ms']:.1f} ms | {r['tt_vision_avg_ms']:.1f} ms | {r['tt_vision_min_ms']:.1f} ms | {r['tt_vision_stddev_ms']:.2f} ms | {speedup_v:.2f}x |
-| Text encoder (1 seq) | {r['pt_text_avg_ms']:.1f} ms | {r['tt_text_avg_ms']:.1f} ms | {r['tt_text_min_ms']:.1f} ms | {r['tt_text_stddev_ms']:.2f} ms | {speedup_t:.2f}x |
+| Component | PyTorch CPU (median) | TTNN (median) | TTNN (min) | TTNN (stddev) | Speedup vs CPU |
+|-----------|----------------------|---------------|------------|---------------|----------------|
+| Vision encoder | {r['pt_vision_median_ms']:.1f} ms | {r['tt_vision_median_ms']:.1f} ms | {r['tt_vision_min_ms']:.1f} ms | {r['tt_vision_stddev_ms']:.2f} ms | {speedup_v:.2f}x |
+| Text encoder (1 seq) | {r['pt_text_median_ms']:.1f} ms | {r['tt_text_median_ms']:.1f} ms | {r['tt_text_min_ms']:.1f} ms | {r['tt_text_stddev_ms']:.2f} ms | {speedup_t:.2f}x |
 | Full pipeline | — | {r['tt_full_pipeline_ms']:.1f} ms | — | — | — |
 
 **Throughput:** {r['vision_fps']:.1f} images/sec (vision encoder)

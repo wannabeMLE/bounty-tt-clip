@@ -3,8 +3,8 @@
 # CLIP-ViT Full Model Implementation in TTNN
 # Supports 3 optimization stages:
 #   Stage 1: Functional (DRAM, HiFi4, no fusion)
-#   Stage 2: Optimized (L1, LoFi, GELU fusion, sharding)
-#   Stage 3: Deep optimization (SDPA, program configs, full fusion)
+#   Stage 2: Optimized (L1 interleaved, LoFi, bfloat8_b weights)
+#   Stage 3: Deep optimization (SDPA, program configs)
 #
 # Reference: OWL-ViT TTNN implementation in tt-metal
 
@@ -775,13 +775,10 @@ def run_vision_encoder(
     compute_config = config.get_compute_kernel_config()
     encoder_layer_fn = _get_encoder_layer_fn(config.stage)
 
-    # Step 1: Patch embeddings
-    # Stage 1-2: CPU conv2d (fold+linear on-device path has PCC issues, see results/stage2_sharding_investigation.md)
-    # Stage 3: on-device fold+linear (requires fixing fold reshape to match conv2d output)
-    if config.stage >= 3:
-        hidden_states = vision_patch_embeddings_stage2(pixel_values, params, config, device)
-    else:
-        hidden_states = vision_patch_embeddings(pixel_values, params, config, device)
+    # Step 1: Patch embeddings (CPU conv2d for all stages)
+    # NOTE: fold+linear on-device path exists (vision_patch_embeddings_stage2) but has
+    # PCC -0.02 due to reshape ordering issues. Keep CPU conv2d until fixed.
+    hidden_states = vision_patch_embeddings(pixel_values, params, config, device)
 
     # Step 2: Pre-layer norm
     hidden_states = ttnn.layer_norm(
@@ -1023,9 +1020,9 @@ class CLIPModelTTNN:
         print(f"  Memory: {'DRAM (ttsim)' if _sim else 'L1' if config.stage >= 2 else 'DRAM'}")
         print(f"  Math:   {'HiFi2 (ttsim)' if (_sim and config.stage >= 2) else 'LoFi' if config.stage >= 2 else 'HiFi4'}")
         print(f"  Weights: {'bfloat16 (ttsim)' if _sim else 'bfloat8_b' if config.stage >= 2 else 'bfloat16'}")
-        print(f"  GELU:   {'separate (ttsim)' if _sim else 'fused' if config.stage >= 2 else 'separate'}")
-        print(f"  Sharding: {'off (ttsim)' if _sim else 'height' if config.stage >= 2 else 'off'}")
-        print(f"  Patch embed: {'CPU (ttsim)' if _sim else 'fold+linear' if config.stage >= 2 else 'CPU conv2d'}")
+        print(f"  GELU:   QuickGELU (3 ops)")
+        print(f"  Sharding: {'off (ttsim)' if _sim else 'L1 interleaved' if config.stage >= 2 else 'off'}")
+        print(f"  Patch embed: {'CPU (ttsim)' if _sim else 'CPU conv2d'}")
         print(f"  SDPA:   {'Yes' if config.stage >= 3 else 'No'}")
 
     def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:

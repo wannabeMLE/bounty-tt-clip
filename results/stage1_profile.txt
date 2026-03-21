@@ -2,115 +2,58 @@ CLIP-ViT TTNN Layer Profile — Stage 1
 =======================================================
 
 Vision encoder layer 0 (stage 1):
-  layer_norm1            0.06ms   7.3%  LayerNorm
-  qkv_linear             0.12ms  13.9%  Attention
-  attn_scores            0.07ms   8.7%  Attention
-  softmax                0.05ms   6.0%  Attention
-  attn_context           0.08ms   9.4%  Attention
-  concat_heads           0.03ms   4.1%  Attention
-  out_proj               0.05ms   6.4%  Attention
-  residual1_add          0.03ms   3.8%  Residual
-  layer_norm2            0.06ms   7.0%  LayerNorm
-  fc1_linear             0.08ms   9.5%  MLP
-  quick_gelu             0.07ms   8.7%  MLP
-  fc2_linear             0.10ms  11.9%  MLP
-  residual2_add          0.03ms   3.3%  Residual
+  layer_norm1            0.07ms   7.7%  LayerNorm
+  qkv_linear             0.13ms  13.4%  Attention
+  attn_scores            0.08ms   8.5%  Attention
+  softmax                0.06ms   5.9%  Attention
+  attn_context           0.09ms   9.5%  Attention
+  concat_heads           0.04ms   4.3%  Attention
+  out_proj               0.06ms   6.5%  Attention
+  residual1_add          0.04ms   4.6%  Residual
+  layer_norm2            0.07ms   7.7%  LayerNorm
+  fc1_linear             0.07ms   7.9%  MLP
+  quick_gelu             0.09ms   9.0%  MLP
+  fc2_linear             0.10ms  10.9%  MLP
+  residual2_add          0.04ms   4.1%  Residual
   ────────────────────────────────────────
-  Total                  0.84ms
+  Total                  0.94ms
 
 Vision encoder layer 11 (stage 1):
-  layer_norm1            0.06ms   7.6%  LayerNorm
-  qkv_linear             0.10ms  13.3%  Attention
-  attn_scores            0.07ms   8.7%  Attention
-  softmax                0.04ms   5.4%  Attention
-  attn_context           0.07ms   9.8%  Attention
-  concat_heads           0.03ms   3.9%  Attention
-  out_proj               0.05ms   6.3%  Attention
-  residual1_add          0.03ms   4.2%  Residual
-  layer_norm2            0.06ms   7.5%  LayerNorm
-  fc1_linear             0.07ms   8.6%  MLP
-  quick_gelu             0.07ms   9.0%  MLP
-  fc2_linear             0.09ms  12.2%  MLP
-  residual2_add          0.03ms   3.7%  Residual
+  layer_norm1            0.06ms   4.4%  LayerNorm
+  qkv_linear             0.11ms   7.6%  Attention
+  attn_scores            0.09ms   6.4%  Attention
+  softmax                0.59ms  41.4%  Attention
+  attn_context           0.09ms   6.2%  Attention
+  concat_heads           0.04ms   2.5%  Attention
+  out_proj               0.06ms   3.9%  Attention
+  residual1_add          0.04ms   2.7%  Residual
+  layer_norm2            0.06ms   4.5%  LayerNorm
+  fc1_linear             0.07ms   4.9%  MLP
+  quick_gelu             0.08ms   5.8%  MLP
+  fc2_linear             0.10ms   7.1%  MLP
+  residual2_add          0.04ms   2.8%  Residual
   ────────────────────────────────────────
-  Total                  0.77ms
+  Total                  1.42ms
 
 Vision encoder AVERAGE across 12 layers (stage 1):
-  layer_norm1            0.06ms   7.4%  LayerNorm
-  qkv_linear             0.10ms  13.3%  Attention
-  attn_scores            0.07ms   8.8%  Attention
-  softmax                0.04ms   5.5%  Attention
-  attn_context           0.08ms   9.6%  Attention
-  concat_heads           0.03ms   3.9%  Attention
-  out_proj               0.05ms   6.3%  Attention
-  residual1_add          0.03ms   4.0%  Residual
-  layer_norm2            0.06ms   7.5%  LayerNorm
-  fc1_linear             0.07ms   8.5%  MLP
-  quick_gelu             0.07ms   9.4%  MLP
-  fc2_linear             0.10ms  12.1%  MLP
-  residual2_add          0.03ms   3.8%  Residual
+  layer_norm1            0.06ms   6.6%  LayerNorm
+  qkv_linear             0.17ms  17.8%  Attention
+  attn_scores            0.07ms   7.8%  Attention
+  softmax                0.09ms   9.6%  Attention
+  attn_context           0.08ms   8.4%  Attention
+  concat_heads           0.04ms   3.8%  Attention
+  out_proj               0.06ms   5.8%  Attention
+  residual1_add          0.04ms   4.0%  Residual
+  layer_norm2            0.06ms   6.6%  LayerNorm
+  fc1_linear             0.07ms   7.3%  MLP
+  quick_gelu             0.08ms   8.1%  MLP
+  fc2_linear             0.10ms  10.5%  MLP
+  residual2_add          0.04ms   3.8%  Residual
   ────────────────────────────────────────
-  Total                  0.79ms
+  Total                  0.95ms
 
   Category breakdown:
-    Attention         0.37ms  47.3%
-    MLP               0.24ms  30.0%
-    LayerNorm         0.12ms  15.0%
-    Residual          0.06ms   7.7%
-
-Text encoder layer 0 (stage 1):
-  layer_norm1            0.06ms   8.3%  LayerNorm
-  qkv_linear             0.09ms  12.6%  Attention
-  attn_scores            0.07ms  10.0%  Attention
-  softmax                0.05ms   7.4%  Attention
-  attn_context           0.07ms   9.5%  Attention
-  concat_heads           0.03ms   4.0%  Attention
-  out_proj               0.05ms   6.8%  Attention
-  residual1_add          0.03ms   4.7%  Residual
-  layer_norm2            0.05ms   7.0%  LayerNorm
-  fc1_linear             0.05ms   6.7%  MLP
-  quick_gelu             0.07ms   9.7%  MLP
-  fc2_linear             0.06ms   9.0%  MLP
-  residual2_add          0.03ms   4.1%  Residual
-  ────────────────────────────────────────
-  Total                  0.69ms
-
-Text encoder layer 11 (stage 1):
-  layer_norm1            0.05ms   7.4%  LayerNorm
-  qkv_linear             0.07ms  11.6%  Attention
-  attn_scores            0.07ms  11.0%  Attention
-  softmax                0.05ms   7.3%  Attention
-  attn_context           0.06ms  10.1%  Attention
-  concat_heads           0.03ms   4.1%  Attention
-  out_proj               0.04ms   6.0%  Attention
-  residual1_add          0.03ms   4.5%  Residual
-  layer_norm2            0.05ms   7.3%  LayerNorm
-  fc1_linear             0.04ms   7.0%  MLP
-  quick_gelu             0.06ms   9.8%  MLP
-  fc2_linear             0.06ms   9.5%  MLP
-  residual2_add          0.03ms   4.4%  Residual
-  ────────────────────────────────────────
-  Total                  0.63ms
-
-Text encoder AVERAGE across 12 layers (stage 1):
-  layer_norm1            0.05ms   7.5%  LayerNorm
-  qkv_linear             0.08ms  12.1%  Attention
-  attn_scores            0.06ms  10.1%  Attention
-  softmax                0.05ms   7.4%  Attention
-  attn_context           0.06ms  10.0%  Attention
-  concat_heads           0.03ms   4.2%  Attention
-  out_proj               0.04ms   6.0%  Attention
-  residual1_add          0.03ms   4.6%  Residual
-  layer_norm2            0.05ms   7.5%  LayerNorm
-  fc1_linear             0.05ms   7.1%  MLP
-  quick_gelu             0.06ms   9.8%  MLP
-  fc2_linear             0.06ms   9.4%  MLP
-  residual2_add          0.03ms   4.4%  Residual
-  ────────────────────────────────────────
-  Total                  0.64ms
-
-  Category breakdown:
-    Attention         0.32ms  49.7%
-    MLP               0.17ms  26.3%
-    LayerNorm         0.10ms  15.0%
-    Residual          0.06ms   9.0%
+    Attention         0.51ms  53.2%
+    MLP               0.25ms  25.8%
+    LayerNorm         0.13ms  13.1%
+    Residual          0.07ms   7.8%

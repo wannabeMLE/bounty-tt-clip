@@ -36,6 +36,9 @@ Thumbs.db
 
 .env
 
+# Tracy profiler artifacts (regenerable via profile_tracy.py)
+results/profiler/
+
 # Project-specific
 .claude/
 docs/
